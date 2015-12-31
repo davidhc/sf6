@@ -213,6 +213,58 @@
               (recur new-status-of new-market-price)))))
     out))
 
+(defn- get-ticks
+  "convert string timestamp to ticks"
+  [ts]
+  (when ts
+    (-> ts
+        clojure.instant/read-instant-timestamp
+        .getTime)))
+
+
+(defn- summarize-tick
+  [tick]
+  (when (and tick (tick "ok"))
+    (let [q (tick "quote")]
+      {:bid (q "bid") :ask (q "ask") :time (get-ticks (q "quoteTime"))}
+      )))
+
+(defn- summarize-fill
+  [fill]
+  (when (and fill (fill "ok"))
+    (let [account (fill "account")
+          direction (get-in fill ["order" "direction"])
+          f (get-in fill ["order" "fills"] )]
+      (into []
+            (map (fn [m]
+                   {:price (m "price")
+                    :qty (m "qty")
+                    :time (get-ticks (m "ts"))
+                    :account account
+                    :direction (if (= direction "buy") :buy :sell)
+                    })
+                 f)))))
+
+
+
+(defn- merge-fills-and-ticks
+  [fills-chan ticker-chan]
+  (let [out (chan)]
+    (go (while true
+          (>! out
+              (alt!
+                fills-chan   ([res] [:fill (summarize-fill res)])
+                ticker-chan  ([res] [:tick (summarize-tick res)])
+                :priority true))))
+    out))
+
+(defn- echo-chan
+  [in]
+  (go (while true
+        (println (<! in)))))
+
+
+
 (defn making-amends
   [account venue sym]
   (let [order-id-channel (-> (get-max-order-id-channel venue sym)
@@ -224,7 +276,8 @@
                           json-parser)
         ticker-channel (-> (get-raw-tickertape-channel account venue)
                            json-parser)
-        navs-chan      (track-navs fills-channel ticker-channel)
+        ;;navs-chan      (track-navs fills-channel ticker-channel)
+        merge-chan      (merge-fills-and-ticks fills-channel ticker-channel)
         ]
     (add-account-reader order-id-channel accounts-channel venue sym)
     (add-account-reader order-id-channel accounts-channel venue sym)
@@ -233,7 +286,7 @@
     (add-account-reader order-id-channel accounts-channel venue sym)
 
     
-    navs-chan
+    (echo-chan merge-chan) 
     ))
 
 
