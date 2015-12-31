@@ -6,7 +6,7 @@
             [clojure.core.async
              :as a
              :refer [>! <! >!! <!! go chan buffer close! thread
-                     alt! alts! alts!! timeout]])
+                     alt! alts! alts!! timeout go-loop]])
   (:use [clojure.java.io]
         [clojure.pprint]
         [clojure.tools.namespace.repl :only (refresh)])
@@ -263,7 +263,89 @@
   (go (while true
         (println (<! in)))))
 
+(defn- accumulate-chan
+  [in]
+  (let [out (chan)]
+    (go-loop [acc-fills '()
+              acc-ticks '()]
+      (alt!
+        [[out [acc-fills acc-ticks]]] :sent
+        (timeout 10)                  :timeout)
+      (let [[type res] (<! in)]
+        (cond
+          (= type :fill) (recur (conj acc-fills res) acc-ticks)
+          (= type :tick) (recur acc-fills (conj acc-ticks res))
+          :else          (recur acc-fills acc-ticks))))
+    out))
 
+(defn- clean-acc-ticks
+  [acc-ticks]
+  (->> acc-ticks
+       (filter (fn [m] (and (:bid m) (:ask m) (:time m))))
+       (map (fn [m] {:mid (* 0.5 (+ (:bid m) (:ask m))) :time (:time m)}))
+       reverse
+       (into [])))
+
+(defn- ticks-search-max
+  [ticks target]
+  (letfn
+      [(helper
+         [low high]
+         (if (> low high)
+           low
+           (let [mid (int (/ (+ low high) 2))
+                 val (:time (nth ticks mid)) ]
+             (if (> val target)
+               (recur low (dec mid))
+               (recur (inc mid) high)
+               ))))]
+    (helper 0 (dec (count ticks)))))
+
+(defn- ticks-ind-max
+  [ticks target]
+  (letfn
+      [(helper
+         [low high]
+         (if (> low high)
+           low
+           (let [mid (int (/ (+ low high) 2))
+                 val (:time (nth ticks mid)) ]
+             (if (> val target)
+               (recur low (dec mid))
+               (recur (inc mid) high)))))]
+    (helper 0 (dec (count ticks)))))
+
+(defn- ticks-ind-min
+  [ticks target]
+  (letfn
+      [(helper
+         [low high]
+         (if (> low high)
+           high
+           (let [mid (int (/ (+ low high) 2))
+                 val (:time (nth ticks mid)) ]
+             (if (< val target)
+               (recur (inc mid) high)
+               (recur low (dec mid))))))]
+    (helper 0 (dec (count ticks)))))
+
+(defn- ticks-slice
+  [ticks target]
+  (let [ind-min (ticks-ind-min ticks target)
+        ind-max (ticks-ind-max ticks target)
+        cnt     (count ticks)]
+    (cond
+      (and (= ind-min -1) (= ind-max 0))             nil   ;;earlier than all ticks
+      (and (= ind-min (dec cnt)) (= ind-max cnt))    nil   ;;later than all ticks
+      (and (= (inc ind-min) ind-max))                (subvec ticks ind-min ind-max)
+      :else                                          (subvec ticks (inc ind-min) ind-max))))
+
+
+(defn- clean-acc-fills
+  [acc-fills]
+  (->> acc-fills
+      reverse
+      (reduce into)))
 
 (defn making-amends
   [account venue sym]
@@ -286,7 +368,8 @@
     (add-account-reader order-id-channel accounts-channel venue sym)
 
     
-    (echo-chan merge-chan) 
+    ;;(echo-chan merge-chan)
+    (accumulate-chan merge-chan) 
     ))
 
 
