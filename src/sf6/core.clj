@@ -414,11 +414,11 @@
 (defn send-solution
   [session-id account]
   (client/post
-   "https://www.stockfighter.io/gm/instances/16608/judge"
+   (str "https://www.stockfighter.io/gm/instances/" session-id "/judge")
    {:body (json/write-str
-           {:account "FKB39042769"
-            :explanation_link "https://github.com/davidhc/sf6"
-            :executive_summary "Trying out a solution, probably wrong.  Tracked regular outsize performance, saw a few accounts that looked fishy, this was the worst"})
+           {:account account
+            :explanation_link "https://github.com/davidhc/sf6/blob/master/src/sf6/core.clj"
+            :executive_summary "Trying out a solution, probably wrong.  Tracked regular outsize performance, saw a few accounts that looked fishy (all the fills did too well, none of them lost money), this was the worst.  Code is at the given URL."})
     :headers {"X-Starfighter-Authorization" api-key}}))
 
 (defn making-amends
