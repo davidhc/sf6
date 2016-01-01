@@ -234,17 +234,12 @@
   [fill]
   (when (and fill (fill "ok"))
     (let [account (fill "account")
-          direction (get-in fill ["order" "direction"])
-          f (get-in fill ["order" "fills"] )]
-      (into []
-            (map (fn [m]
-                   {:price (m "price")
-                    :qty (m "qty")
-                    :time (get-ticks (m "ts"))
-                    :account account
-                    :direction (if (= direction "buy") :buy :sell)
-                    })
-                 f)))))
+          direction (get-in fill ["order" "direction"])]
+      [{:qty       (get-in fill ["order" "originalQty"])
+        :time      (get-ticks (get-in fill ["order" "ts"]))
+        :account   account
+        :direction (if (= direction "buy") :buy :sell)}]
+      )))
 
 
 
@@ -255,6 +250,7 @@
           (>! out
               (alt!
                 fills-chan   ([res] [:fill (summarize-fill res)])
+                ;;fills-chan   ([res] [:fill res])
                 ticker-chan  ([res] [:tick (summarize-tick res)])
                 :priority true))))
     out))
