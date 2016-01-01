@@ -8,4 +8,5 @@
                  [clj-http "2.0.0"]
                  [org.clojure/tools.namespace "0.2.11"]
                  [stylefruits/gniazdo "0.4.1"]
-                 [org.clojure/core.async "0.2.374"]])
+                 [org.clojure/core.async "0.2.374"]
+                 [org.clojure/math.numeric-tower "0.0.4"]])

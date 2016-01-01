@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clj-http.client :as client]
             [gniazdo.core :as ws]
+            [clojure.math.numeric-tower :as math]
             [clojure.core.async
              :as a
              :refer [>! <! >!! <!! go chan buffer close! thread
@@ -340,12 +341,85 @@
       (and (= (inc ind-min) ind-max))                (subvec ticks ind-min ind-max)
       :else                                          (subvec ticks (inc ind-min) ind-max))))
 
+(defn- time->price
+  [ticks target-time]
+  (when-let [slice (ticks-slice ticks target-time)]
+    (float (/ (reduce + (map :mid slice)) (count slice))) ))
 
 (defn- clean-acc-fills
   [acc-fills]
   (->> acc-fills
       reverse
       (reduce into)))
+
+(defn- enrich-fills-with-returns
+  [fills ticks holding-period]
+  (letfn [(get-return
+            [time-1 time-2]
+            (let [price-1 (time->price ticks time-1)
+                  price-2 (time->price ticks time-2)]
+              (when (and price-1 price-2)
+                (- (/ price-2 price-1) 1))))]
+    (map (fn [m]
+           (assoc m :return (get-return (:time m) (+ (:time m) holding-period))))
+         fills)))
+
+(defn- get-return-stats-of
+  [acc-chan holding-period min-fill-count min-average]
+  (let [r              (<!! acc-chan)
+        fills          (clean-acc-fills (first r))
+        ticks          (clean-acc-ticks (second r))
+        enriched-fills (enrich-fills-with-returns fills ticks holding-period)
+        return-series-of
+        (reduce
+         (fn [m e]
+           (update
+            m
+            (:account e)
+            conj
+            {:qty    (:qty e)
+             :return (* (if (= (:direction e) :buy) 1 -1) (:return e))}))
+         {}
+         (filter #(:return %) enriched-fills))
+        return-stats-of
+        (into
+         {}
+         (map
+          (fn [[id rs]]
+           (when (seq rs)
+             (let [wgted-sum     (reduce + (map (fn [x] (* (:qty x) (:return x))) rs))
+                   wgt-sum       (reduce + (map :qty rs))
+                   fill-count    (count rs)
+                   neg-count     (count (filter #(< (:return %) 0) rs))
+                   average       (/ wgted-sum wgt-sum)
+                   wgted-var-sum (reduce + (map
+                                            (fn [x] (* (:qty x)
+                                                       (- (:return x) average)
+                                                       (- (:return x) average)
+                                                       ))
+                                            rs))
+                   variance      (/ wgted-var-sum wgt-sum)]
+               [id {:average average
+                    :std (math/sqrt variance)
+                    :qty wgt-sum
+                    :fill-count fill-count
+                    :neg-count   neg-count}])))
+          return-series-of))
+        ]
+    ;;return-series-of
+    (filter #(and (> (:average (second %)) min-average)
+                  (> (:fill-count (second %)) min-fill-count))
+            return-stats-of)))
+
+(defn send-solution
+  [session-id account]
+  (client/post
+   "https://www.stockfighter.io/gm/instances/16608/judge"
+   {:body (json/write-str
+           {:account "FKB39042769"
+            :explanation_link "https://github.com/davidhc/sf6"
+            :executive_summary "Trying out a solution, probably wrong.  Tracked regular outsize performance, saw a few accounts that looked fishy, this was the worst"})
+    :headers {"X-Starfighter-Authorization" api-key}}))
 
 (defn making-amends
   [account venue sym]
